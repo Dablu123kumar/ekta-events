@@ -15,7 +15,15 @@ export const addBlog = async (req,res)=>{
     const uploadImg = await cloudinary.uploader.upload(image, 
         { folder: 'blogs', // optional: set your Cloudinary folder
  });
-        const blog = await Blog({title,description,image : uploadImg.secure_url})
+    const payload = {
+            title,
+            description,
+            image : {
+                url : uploadImg.secure_url,
+                public_id : uploadImg.public_id // required to delete from cloudinary
+            }
+ }
+        const blog = await Blog(payload)
         await blog.save()
         return res.status(201).json({
             message: "Blog added successfully",
@@ -54,32 +62,39 @@ export const updateBlog = async (req,res)=>{
     const blog = await Blog.findById(id);
     if (!blog) return res.status(404).json({ message: 'Blog not found' });
 
-    // Replace image if changed
-    let imageUrl = blog.image;
-    if (image && image !== blog.image) {
-          // ✅ Extract old public_id from URL
-      const segments = blog.image.split('/');
-      const publicIdWithExt = segments[segments.length - 1];
-      const publicId = `blogs/${publicIdWithExt.split('.')[0]}`;
+ 
 
-      // ✅ Delete old image
-      await cloudinary.uploader.destroy(publicId);
+    // If image has changed (i.e., is a new base64 or different string), replace it
+    if (image && image !== blog.image.url) {
+      // Delete the old image from Cloudinary using stored public_id
+      if (blog.image.public_id) {
+        await cloudinary.uploader.destroy(blog.image.public_id);
+      }
 
-        // upload new image
+      // Upload new image
       const uploadedImage = await cloudinary.uploader.upload(image, {
-        folder: 'blogs',
+        folder: "blogs",
       });
-      imageUrl = uploadedImage.secure_url;
+
+      blog.image = {
+        url: uploadedImage.secure_url,
+        public_id: uploadedImage.public_id,
+      };
     }
 
+    // Update other fields
     blog.title = title || blog.title;
     blog.description = description || blog.description;
-    blog.image = imageUrl;
 
     await blog.save();
-    res.json({ message: 'Blog updated', blog });
+    return res.status(200).json({
+      message: "Blog updated successfully",
+      success: true,
+      error: false,
+      data: blog,
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 }
 
@@ -87,7 +102,20 @@ export const updateBlog = async (req,res)=>{
 export const deleteBlog = async (req,res)=>{
     try {
         const { id } = req.params
-        await Blog.findByIdAndDelete(id)
+         const blog = await Blog.findById(id)
+         if (!blog){ 
+            return res.status(404).json({ 
+                message: 'Blog not found',
+                success: false,
+                error : true 
+            })};
+
+            // Delete image from Cloudinary
+    if (blog.image && blog.image.public_id) {
+      await cloudinary.uploader.destroy(blog.image.public_id);
+    }
+        await Blog.findByIdAndDelete(id);
+
         return res.status(200).json({
             message: "Blog deleted successfully",
             success: true,
